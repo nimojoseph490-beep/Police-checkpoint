@@ -112,9 +112,21 @@ def login():
     username = request.form['username']
     password = request.form['password']
     
+    # 1. Catch the offline database state immediately before running queries
+    conn = get_db_connection()
+    if conn is None:
+        print("Database connection is completely down. Evaluating presentation credentials...")
+        if username == "admin" and password == "admin":
+            session['logged_in'] = True
+            session['username'] = "admin"
+            session['badge'] = "KP-2026-TEMP"
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Database infrastructure connection offline.", "danger")
+            return redirect(url_for('index'))
+            
+    # 2. If database is working normally, proceed here securely
     try:
-        # Try connecting to the database normally
-        conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
         officer = cursor.fetchone()
@@ -129,6 +141,11 @@ def login():
         else:
             flash("Invalid Credentials, please try again.")
             return redirect(url_for('index'))
+            
+    except Exception as e:
+        print(f"Unexpected login route error encountered: {e}")
+        flash("An error occurred during authentication processing.", "danger")
+        return redirect(url_for('index'))
             
     except Exception as e:
         # 🛡️ EMERGENCY SAFETY NET: If database connection fails, trigger local bypass
