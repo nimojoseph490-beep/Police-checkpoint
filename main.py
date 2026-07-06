@@ -109,23 +109,30 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form['username']
-    password = request.form['password']
+    # Supports 'username', 'email', or 'user' input names from your HTML form
+    username = request.form.get('username') or request.form.get('email') or request.form.get('user')
+    password = request.form.get('password') or request.form.get('pass')
     
-    # 1. Catch the offline database state immediately before running queries
+    # Strip whitespace to prevent accidental typos during entry
+    if username: username = username.strip()
+    if password: password = password.strip()
+    
+    # 1. Immediate Hardcoded Master Bypass for Presentation Flow
+    if username == "admin" and password == "admin":
+        print("🚀 Presentation Master Bypass Authenticated successfully!")
+        session['logged_in'] = True
+        session['username'] = "admin"
+        session['badge'] = "KP-2026-TEMP"
+        return redirect(url_for('dashboard'))
+
+    # 2. Database Connection Check
     conn = get_db_connection()
     if conn is None:
-        print("Database connection is completely down. Evaluating presentation credentials...")
-        if username == "admin" and password == "admin":
-            session['logged_in'] = True
-            session['username'] = "admin"
-            session['badge'] = "KP-2026-TEMP"
-            return redirect(url_for('dashboard'))
-        else:
-            flash("Database infrastructure connection offline.", "danger")
-            return redirect(url_for('index'))
+        print("Database connection down. Incorrect bypass credentials submitted.")
+        flash("Database infrastructure connection offline.", "danger")
+        return redirect(url_for('index'))
             
-    # 2. If database is working normally, proceed here securely
+    # 3. Standard Production Database Path
     try:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
@@ -143,7 +150,7 @@ def login():
             return redirect(url_for('index'))
             
     except Exception as e:
-        print(f"Unexpected login route error encountered: {e}")
+        print(f"Unexpected login route error: {e}")
         flash("An error occurred during authentication processing.", "danger")
         return redirect(url_for('index'))
             
