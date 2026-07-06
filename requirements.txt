@@ -1,4 +1,4 @@
 Flask==3.0.2
-mysql-connector-python==8.3.0
+pymysql
 pyserial==3.5
 gunicorn==21.2.0

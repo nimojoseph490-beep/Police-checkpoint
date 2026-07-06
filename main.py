@@ -5,7 +5,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
-import mysql.connector
+import pymysql  # 🔄 Switched from mysql.connector for fast cloud deployment
 import serial
 import time
 
@@ -39,17 +39,20 @@ if not arduino:
     print("⚠️ Hardware port unassigned. Interface entering automated Simulation Mode.")
 
 def get_db_connection():
-    """Establishes connection to the infrastructure database. Returns None if unreachable."""
+    """Establishes connection to the cloud or local infrastructure database dynamically."""
     try:
-        conn = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password=DB_PASSWORD,
-            database="police_checkpoint",
-            connect_timeout=3
+        conn = pymysql.connect(
+            host=os.environ.get("mysql-3432985d-nimojoseph490-fc32.d.aivencloud.com", "localhost"),
+            user=os.environ.get("avnadmin", "root"),
+            password=os.environ.get("AVNS_AYcPhIh7_1Qg6TqmW_o", "State2580@agogo"),
+            database=os.environ.get("police_checkpoint", "defaultdb"),
+            port=int(os.environ.get("23937", 21217)),
+            autocommit=True,
+            connect_timeout=3,
+            cursorclass=pymysql.cursors.DictCursor  # 🔄 Automatically makes results act like Python dictionaries
         )
         return conn
-    except mysql.connector.Error as err:
+    except Exception as err:
         print(f"Database connection skipped: {err}. Activating fallback simulation pipelines.")
         return None
 
@@ -101,7 +104,7 @@ def login():
         return redirect(url_for('index'))
             
     try:
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor() # ✅ Clean, updated syntax
         cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
         officer = cursor.fetchone()
         cursor.close()
