@@ -109,40 +109,45 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
+    username = request.form['username']
+    password = request.form['password']
     
-    conn = get_db_connection()
-    if not conn:
-        # Emergency fail-safe login bypass for testing UI offline if database drops
+    try:
+        # Try connecting to the database normally
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
+        officer = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if officer:
+            session['logged_in'] = True
+            session['username'] = officer['username']
+            session['badge'] = officer['badge_number']
+            return redirect(url_for('dashboard'))
+        else:
+            flash("Invalid Credentials, please try again.")
+            return redirect(url_for('index'))
+            
+    except Exception as e:
+        # 🛡️ EMERGENCY SAFETY NET: If database connection fails, trigger local bypass
+        print(f"Database offline fallback activated: {e}")
+        
         if username == "admin" and password == "admin":
             session['logged_in'] = True
-            session['badge_number'] = "KP-2026-TEMP"
-            session['officer_name'] = "Officer Override"
+            session['username'] = "admin"
+            session['badge'] = "KP-2026-TEMP"
             return redirect(url_for('dashboard'))
-        flash("Database infrastructure connection offline.", "danger")
-        return redirect(url_for('index'))
-        
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
-    officer = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if officer:
-        session['logged_in'] = True
-        session['badge_number'] = officer['badge_number']
-        session['officer_name'] = officer['name']
-        return redirect(url_for('dashboard'))
-    else:
-        flash("Invalid identification credentials supplied.", "danger")
-        return redirect(url_for('index'))
+        else:
+            flash("Database infrastructure connection offline.", "danger")
+            return redirect(url_for('index'))
 
 @app.route('/dashboard')
 def dashboard():
     if 'logged_in' not in session:
         return redirect(url_for('index'))
-    return render_template('dashboard.html', badge_number=session.get('badge_number'), officer_name=session.get('officer_name'))
+    return render_template('dashboard.html', badge_number=session.get('badge'), officer_name=session.get('username'))
 
 @app.route('/inspect', methods=['POST'])
 def inspect_vehicle():
