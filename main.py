@@ -150,7 +150,7 @@ def verify_driver_api(driver_code):
         })
         
     try:
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor() # ✅ Clean, updated syntax
         cursor.execute("SELECT * FROM drivers WHERE driver_code = %s OR license_number = %s", (driver_code.strip(), driver_code.strip()))
         driver = cursor.fetchone()
         cursor.close()
@@ -191,7 +191,7 @@ def verify_vehicle_api(vehicle_code):
         return jsonify({"status": "success", "found": True, "vehicle": mock_vehicle})
         
     try:
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor() # ✅ Clean, updated syntax
         cursor.execute("SELECT * FROM vehicles WHERE vehicle_code = %s OR license_plate = %s", (code_clean, code_clean))
         vehicle = cursor.fetchone()
         cursor.close()
