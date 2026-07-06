@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GuardGate Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; background: #f1f5f9; color: #1e293b; }
+        header { background: #1e293b; color: white; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
+        .nav-tabs { display: flex; background: #334155; justify-content: space-around; padding: 10px 0; }
+        .tab-btn { color: #cbd5e1; background: none; border: none; font-size: 1rem; font-weight: 600; cursor: pointer; padding: 5px 15px; }
+        .tab-btn.active { color: white; border-bottom: 3px solid #3b82f6; }
+        .container { max-width: 600px; margin: 20px auto; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 10px; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 1rem; }
+        .btn { width: 100%; padding: 10px; border: none; border-radius: 4px; font-size: 1rem; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-danger { background: #dc2626; color: white; }
+        .btn-warning { background: #eab308; color: #1e293b; }
+        .btn-success { background: #16a34a; color: white; font-size: 1.2rem; height: 50px; }
+        .result-box { margin-top: 15px; padding: 15px; border-radius: 6px; background: #f8fafc; border: 1px solid #e2e8f0; display: none; }
+        .flash-msg { background: #dcfce7; color: #15803d; padding: 10px; border-radius: 4px; margin-bottom: 15px; text-align: center; font-weight: bold;}
+        .img-preview { max-width: 150px; display: block; margin-top: 10px; border-radius: 6px; }
+        
+        /* Brilliant error alert display card */
+        .error-overlay { display: none; background: #fee2e2; border: 2px solid #ef4444; color: #991b1b; padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+
+<header>
+    <h3>Gate: Checkpoint Alpha</h3>
+    <span>Badge: {{ session['badge'] }} | <a href="/logout" style="color: #f87171; text-decoration: none;">Exit</a></span>
+</header>
+
+<div class="nav-tabs">
+    <button class="tab-btn active" onclick="switchTab('v-driver')">Verify Driver</button>
+    <button class="tab-btn" onclick="switchTab('v-vehicle')">Vehicle Inspection</button>
+    <button class="tab-btn" onclick="switchTab('o-driver')">Onboard Driver</button>
+    <button class="tab-btn" onclick="switchTab('o-vehicle')">Onboard Vehicle</button>
+</div>
+
+<div class="container">
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for msg in messages %}<div class="flash-msg">{{ msg }}</div>{% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    <div id="v-driver" class="panel active">
+        <h2>🔍 Driver Verification</h2>
+        <div class="form-group">
+            <input type="text" id="driver_search_input" placeholder="Enter Driver Unique Code or License #">
+            <button class="btn btn-primary" onclick="searchDriver()">Search Driver</button>
+        </div>
+        <div id="driver_result" class="result-box"></div>
+    </div>
+
+    <div id="v-vehicle" class="panel">
+        <h2>🚘 Vehicle Inspection & Enforcement</h2>
+        <div class="form-group">
+            <input type="text" id="vehicle_search_input" placeholder="Enter Vehicle Unique Code or License Plate">
+            <button class="btn btn-primary" onclick="searchVehicle()">Inspect Vehicle</button>
+        </div>
+        <div id="vehicle_result" class="result-box"></div>
+    </div>
+
+    <div id="o-driver" class="panel">
+        <h2>✍️ Register New Driver</h2>
+        <form action="/onboard/driver" method="POST" enctype="multipart/form-data">
+            <div class="form-group"><label>Full Name</label><input type="text" name="full_name" required></div>
+            <div class="form-group"><label>License Number</label><input type="text" name="license_number" required></div>
+            <div class="form-group"><label>Phone Number</label><input type="text" name="phone_number" required></div>
+            <div class="form-group"><label>Driver Photo</label><input type="file" name="photo" accept="image/*" required></div>
+            <button type="submit" class="btn btn-primary">Generate Credentials & Save</button>
+        </form>
+    </div>
+
+    <div id="o-vehicle" class="panel">
+        <h2>✍️ Register New Vehicle</h2>
+        <form action="/onboard/vehicle" method="POST" enctype="multipart/form-data">
+            <div class="form-group"><label>License Plate</label><input type="text" name="license_plate" required></div>
+            <div class="form-group"><label>Make & Model</label><input type="text" name="make_model" placeholder="e.g. Toyota Camry 2020" required></div>
+            <div class="form-group"><label>Owner's Full Name</label><input type="text" name="owner_name" required></div>
+            <div class="form-group"><label>Vehicle Image</label><input type="file" name="photo" accept="image/*" required></div>
+            <button type="submit" class="btn btn-primary">Register Vehicle Fleet</button>
+        </form>
+    </div>
+
+    <hr style="margin: 25px 0; border: 0; border-top: 1px solid #cbd5e1;">
+    
+    <button class="btn btn-success" onclick="triggerBarrier()">🔓 OPEN BARRIER GATE</button>
+    
+    <div id="error_alert_card" class="error-overlay"></div>
+</div>
+
+<script>
+    // Global tracker to inform barrier logic which car is currently sitting at the checkpoint
+    let currentInspectedVehicleCode = null;
+
+    function switchTab(tabId) {
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(tabId).classList.add('active');
+        event.currentTarget.classList.add('active');
+        clearErrorAlert();
+    }
+
+    function clearErrorAlert() {
+        let errCard = document.getElementById('error_alert_card');
+        errCard.innerHTML = "";
+        errCard.style.display = "none";
+    }
+
+    function searchDriver() {
+        let val = document.getElementById('driver_search_input').value;
+        let resBox = document.getElementById('driver_result');
+        if(!val) return;
+        clearErrorAlert();
+        
+        fetch(`/verify/driver/${val}`)
+            .then(res => res.json())
+            .then(data => {
+                resBox.style.display = "block";
+                if(data.id) {
+                    resBox.innerHTML = `
+                        <h4 style="margin:0; color:#16a34a;">✅ Record Confirmed</h4>
+                        <p><strong>Code:</strong> ${data.driver_code}<br>
+                        <strong>Name:</strong> ${data.full_name}<br>
+                        <strong>Status:</strong> <span style="color:${data.status === 'Valid' ? 'green':'red'}">${data.status}</span></p>
+                        ${data.photo_path ? `<img class="img-preview" src="/static/${data.photo_path}">` : ''}
+                    `;
+                } else {
+                    resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ Driver Not Found</h4>`;
+                }
+            });
+    }
+
+    function searchVehicle() {
+        let val = document.getElementById('vehicle_search_input').value;
+        let resBox = document.getElementById('vehicle_result');
+        if(!val) return;
+        clearErrorAlert();
+        
+        fetch(`/verify/vehicle/${val}`)
+            .then(res => res.json())
+            .then(data => {
+                resBox.style.display = "block";
+                if(data.id) {
+                    currentInspectedVehicleCode = data.vehicle_code;
+                    
+                    // CHECK ARREST LOGIC FOR DYNAMIC UI RENDERING
+                    if (data.inspection_status === "Flagged For Arrest") {
+                        resBox.innerHTML = `
+                            <div style="border: 2px solid #dc2626; background: #fef2f2; padding: 12px; border-radius: 6px;">
+                                <h3 style="margin:0; color:#dc2626;">🚨 ARRESTED VEHICLE DETECTED</h3>
+                                <p style="margin: 5px 0;"><strong>Code:</strong> ${data.vehicle_code}</p>
+                                <p style="margin: 5px 0;"><strong>Plate:</strong> ${data.license_plate}</p>
+                                <p style="margin: 5px 0; color: #b91c1c;"><strong>Reason for Block:</strong> ${data.complaint_reason}</p>
+                                <p style="margin: 5px 0; font-size: 0.85rem;">Flagged by Officer Badge: ${data.flagged_by_badge}</p>
+                                <button class="btn btn-warning" onclick="releaseVehicle('${data.vehicle_code}')">✅ Issue Clearance & Release</button>
+                            </div>
+                        `;
+                    } else {
+                        // Normal execution profile with tools to lodge a complaint
+                        resBox.innerHTML = `
+                            <h4 style="margin:0; color:#16a34a;">✅ Record Clear (Passed)</h4>
+                            <p><strong>Code:</strong> ${data.vehicle_code} | <strong>Plate:</strong> ${data.license_plate}<br>
+                            <strong>Model:</strong> ${data.make_model} | <strong>Owner:</strong> ${data.owner_name}</p>
+                            ${data.photo_path ? `<img class="img-preview" src="/static/${data.photo_path}">` : ''}
+                            
+                            <div style="margin-top: 15px; border-top: 1px dashed #cbd5e1; padding-top: 10px;">
+                                <label style="font-size: 0.9rem; color: #475569;">Lodge Complaint / Set Offence:</label>
+                                <select id="complaint_reason_dropdown">
+                                    <option value="Expired Registration / Roadworthy">Expired Registration / Roadworthy</option>
+                                    <option value="Fake License Plate / Dynamic Forgery">Fake License Plate / Forgery</option>
+                                    <option value="Reckless Driving Violation">Reckless Driving</option>
+                                    <option value="Reported Stolen Vehicle Alert">Reported Stolen Vehicle Alert</option>
+                                </select>
+                                <button class="btn btn-danger" onclick="arrestVehicle('${data.vehicle_code}')">🚨 Lodge & Arrest Vehicle</button>
+                            </div>
+                        `;
+                    }
+                } else {
+                    currentInspectedVehicleCode = null;
+                    resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ Vehicle Records Unresolved</h4>`;
+                }
+            });
+    }
+
+    function arrestVehicle(code) {
+        let reason = document.getElementById('complaint_reason_dropdown').value;
+        fetch('/vehicle/arrest', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ vehicle_code: code, reason: reason })
+        })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message);
+            searchVehicle(); // Refresh interface pane immediately
+        });
+    }
+
+    function releaseVehicle(code) {
+        fetch('/vehicle/release', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ vehicle_code: code })
+        })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message);
+            searchVehicle(); // Refresh UI panel
+        });
+    }
+
+    function triggerBarrier() {
+        clearErrorAlert();
+        fetch('/gate/open', { 
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ active_vehicle_code: currentInspectedVehicleCode })
+        })
+        .then(res => {
+            if (!res.ok) {
+                // Handle the 403 Security lockout block error response
+                return res.json().then(errData => {
+                    let errCard = document.getElementById('error_alert_card');
+                    errCard.style.display = "block";
+                    errCard.innerHTML = errData.message;
+                });
+            }
+            return res.json().then(data => alert(data.message));
+        });
+    }
+</script>
+</body>
+</html>
