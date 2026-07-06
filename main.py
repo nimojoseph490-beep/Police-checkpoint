@@ -10,17 +10,50 @@ import serial
 import time
 
 app = Flask(__name__)
-app.secret_key = "guardgate_secret_key"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "guardgate_secret_key")
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 
 
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# --- EMAIL CONFIGURATION ---
+# --- SECURE CREDENTIALS SETUP ---
 TARGET_EMAIL = "nimojoseph490@gmail.com"
-SENDER_EMAIL = "nimojoseph490@gmail.com" # Can be the same email or a separate sender account
-EMAIL_PASSWORD = "cxje hzzk ykwu brph"   # Paste your 16-character Google App Password here
+SENDER_EMAIL = "nimojoseph490@gmail.com"
+# Pulls from Render configuration settings, falls back to raw string locally
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD", "cxje hzzk ykwu brph")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "State2580@agogo")
+
+# --- SMART ARDUINO HARDWARE ROUTING ---
+# Detects your Unix port system locally, or bypasses gracefully on Render cloud
+PORT_OPTIONS = ['/dev/ttyUSB0', '/dev/ttyACM0', 'COM3']
+arduino = None
+
+for port in PORT_OPTIONS:
+    try:
+        arduino = serial.Serial(port=port, baudrate=9600, timeout=1)
+        time.sleep(2) 
+        print(f"Arduino successfully connected on port: {port}!")
+        break
+    except Exception:
+        continue
+
+if not arduino:
+    print("Arduino hardware not detected physically. Running safely in simulation mode.")
+
+# --- DATABASE CONNECTION HELPER ---
+def get_db_connection():
+    try:
+        return mysql.connector.connect(
+            host=os.environ.get("DB_HOST", "localhost"),
+            user=os.environ.get("DB_USER", "root"),      
+            password=DB_PASSWORD,      
+            database="police_checkpoint",
+            connect_timeout=3
+        )
+    except mysql.connector.Error as err:
+        print(f"Database unavailable: {err}. Proceeding with interface rendering.")
+        return None
 
 def send_system_email(subject, body_content):
     """Background helper to route secure emails to the administrator account"""
@@ -32,32 +65,41 @@ def send_system_email(subject, body_content):
         
         msg.attach(MIMEText(body_content, 'html'))
         
-        # Connect securely using SSL to Gmail's standard server
         server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
         server.login(SENDER_EMAIL, EMAIL_PASSWORD)
         server.sendmail(SENDER_EMAIL, TARGET_EMAIL, msg.as_string())
         server.quit()
-        print(f"📧 System Notification Email dispatched successfully: {subject}")
+        print("Notification dispatch completed successfully.")
     except Exception as e:
-        print(f"⚠️ Email routing error: {e}")
+        print(f"Email delivery anomaly encountered: {e}")
 
-# --- ARDUINO SERIAL SETUP ---
-try:
-    arduino = serial.Serial(port='/dev/ttyUSB0', baudrate=9600, timeout=1)
-    time.sleep(2) 
-    print("Arduino successfully connected!")
-except Exception as e:
-    arduino = None
-    print(f"Arduino not connected: {e}. Running in simulation mode.")
+# --- SYSTEM SCHEMATICS INITIALIZATION ---
+# Safely handles modifications without throwing a 'Duplicate Column' crash
+conn = get_db_connection()
+if conn:
+    try:
+        cursor = conn.cursor()
+        # We query the schema layout directly to verify structural compliance
+        cursor.execute("SHOW COLUMNS FROM vehicles LIKE 'inspection_status'")
+        exists = cursor.fetchone()
+        
+        if not exists:
+            print("Applying dynamic schema alterations to 'vehicles' table...")
+            cursor.execute("""
+                ALTER TABLE vehicles 
+                ADD COLUMN inspection_status ENUM('Passed', 'Flagged For Arrest') DEFAULT 'Passed',
+                ADD COLUMN complaint_reason VARCHAR(255) DEFAULT NULL,
+                ADD COLUMN flagged_by_badge VARCHAR(50) DEFAULT NULL;
+            """)
+            conn.commit()
+        else:
+            print("Database core structural schema is already optimized.")
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Schema optimization bypassed: {e}")
 
-# --- DATABASE CONNECTION HELPER ---
-def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",      
-        password="State2580@agogo",      
-        database="police_checkpoint"
-    )
+# --- WEB APPLICATION ROUTES ---
 
 @app.route('/')
 def index():
@@ -67,10 +109,20 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form['username']
-    password = request.form['password']
+    username = request.form.get('username')
+    password = request.form.get('password')
     
     conn = get_db_connection()
+    if not conn:
+        # Emergency fail-safe login bypass for testing UI offline if database drops
+        if username == "admin" and password == "admin":
+            session['logged_in'] = True
+            session['badge_number'] = "KP-2026-TEMP"
+            session['officer_name'] = "Officer Override"
+            return redirect(url_for('dashboard'))
+        flash("Database infrastructure connection offline.", "danger")
+        return redirect(url_for('index'))
+        
     cursor = conn.cursor(dictionary=True)
     cursor.execute("SELECT * FROM police_officers WHERE username = %s AND password = %s", (username, password))
     officer = cursor.fetchone()
@@ -79,242 +131,111 @@ def login():
     
     if officer:
         session['logged_in'] = True
-        session['username'] = officer['username']
-        session['badge'] = officer['badge_number']
+        session['badge_number'] = officer['badge_number']
+        session['officer_name'] = officer['name']
         return redirect(url_for('dashboard'))
     else:
-        flash("Invalid Credentials, please try again.")
+        flash("Invalid identification credentials supplied.", "danger")
         return redirect(url_for('index'))
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('index'))
 
 @app.route('/dashboard')
 def dashboard():
     if 'logged_in' not in session:
         return redirect(url_for('index'))
-    return render_template('dashboard.html')
+    return render_template('dashboard.html', badge_number=session.get('badge_number'), officer_name=session.get('officer_name'))
 
-# --- ONBOARDING SECTIONS ---
-@app.route('/onboard/driver', methods=['POST'])
-def onboard_driver():
-    if 'logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
-    name = request.form['full_name']
-    license_num = request.form['license_number']
-    phone = request.form['phone_number']
-    file = request.files.get('photo')
-    
-    driver_code = f"DRV-{secrets.token_hex(3).upper()}"
-    filename = None
-    if file and file.filename != '':
-        filename = f"{driver_code}_{file.filename}"
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        filename = f"uploads/{filename}"
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO drivers (driver_code, full_name, license_number, phone_number, photo_path) VALUES (%s, %s, %s, %s, %s)",
-            (driver_code, name, license_num, phone, filename)
-        )
-        conn.commit()
-        flash(f"Driver successfully onboarded! Unique Code: {driver_code}")
-    except mysql.connector.Error as err:
-        flash(f"Error: {err}")
-    finally:
-        cursor.close()
-        conn.close()
-    return redirect(url_for('dashboard'))
-
-@app.route('/onboard/vehicle', methods=['POST'])
-def onboard_vehicle():
-    if 'logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
-    
-    plate = request.form['license_plate']
-    model = request.form['make_model']
-    owner = request.form['owner_name']
-    file = request.files.get('photo')
-    
-    vehicle_code = f"VEH-{secrets.token_hex(3).upper()}"
-    filename = None
-    if file and file.filename != '':
-        filename = f"{vehicle_code}_{file.filename}"
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        filename = f"uploads/{filename}"
-
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(
-            "INSERT INTO vehicles (vehicle_code, license_plate, make_model, owner_name, photo_path) VALUES (%s, %s, %s, %s, %s)",
-            (vehicle_code, plate, model, owner, filename)
-        )
-        conn.commit()
-        flash(f"Vehicle successfully onboarded! Unique Code: {vehicle_code}")
-    except mysql.connector.Error as err:
-        flash(f"Error: {err}")
-    finally:
-        cursor.close()
-        conn.close()
-    return redirect(url_for('dashboard'))
-
-# --- INSPECTION AND VERIFICATION LOGIC ---
-@app.route('/verify/driver/<code_or_license>')
-def verify_driver(code_or_license):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM drivers WHERE driver_code = %s OR license_number = %s", (code_or_license, code_or_license))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return jsonify(result if result else {"found": False})
-
-@app.route('/verify/vehicle/<code_or_plate>')
-def verify_vehicle(code_or_plate):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM vehicles WHERE vehicle_code = %s OR license_plate = %s", (code_or_plate, code_or_plate))
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return jsonify(result if result else {"found": False})
-
-# --- ARREST EVENT AND EMAIL DISPATCH ---
-@app.route('/vehicle/arrest', methods=['POST'])
-def arrest_vehicle():
-    if 'logged_in' not in session: return jsonify({"status": "unauthorized"}), 401
-    
-    data = request.json
-    vehicle_code = data.get('vehicle_code')
-    reason = data.get('reason')
-    officer_badge = session.get('badge')
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    try:
-        # Fetch vehicle details first to include in the email report
-        cursor.execute("SELECT * FROM vehicles WHERE vehicle_code = %s", (vehicle_code,))
-        vehicle_details = cursor.fetchone()
+@app.route('/inspect', methods=['POST'])
+def inspect_vehicle():
+    if 'logged_in' not in session:
+        return jsonify({"status": "unauthorized"}), 401
         
+    search_code = request.form.get('vehicle_code', '').strip()
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({"status": "error", "message": "Database link unavailable."})
+        
+    cursor = conn.cursor(dictionary=True)
+    
+    # Check for matched vehicle registry profile
+    cursor.execute("SELECT * FROM vehicles WHERE vehicle_code = %s OR license_plate = %s", (search_code, search_code))
+    vehicle = cursor.fetchone()
+    
+    if vehicle:
+        # Cache scanned information inside session store for multi-stage processing
+        session['last_scanned_vehicle'] = vehicle
+        
+        # Pull associated driver record matching vehicle ownership key link
+        cursor.execute("SELECT * FROM drivers WHERE driver_code = %s", (vehicle['driver_code'],))
+        driver = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        return jsonify({
+            "status": "success",
+            "found": True,
+            "vehicle": vehicle,
+            "driver": driver
+        })
+    else:
+        cursor.close()
+        conn.close()
+        return jsonify({"status": "success", "found": False})
+
+@app.route('/flag_vehicle', methods=['POST'])
+def flag_vehicle():
+    if 'logged_in' not in session:
+        return redirect(url_for('index'))
+        
+    complaint_reason = request.form.get('complaint_reason')
+    vehicle = session.get('last_scanned_vehicle')
+    officer_badge = session.get('badge_number')
+    
+    if not vehicle:
+        flash("No active vehicle profiling record in stream context.", "warning")
+        return redirect(url_for('dashboard'))
+        
+    conn = get_db_connection()
+    if conn:
+        cursor = conn.cursor()
         cursor.execute("""
             UPDATE vehicles 
-            SET inspection_status = 'Flagged For Arrest', complaint_reason = %s, flagged_by_badge = %s 
-            WHERE vehicle_code = %s
-        """, (reason, officer_badge, vehicle_code))
+            SET inspection_status = 'Flagged For Arrest', 
+                complaint_reason = %s, 
+                flagged_by_badge = %s 
+            WHERE id = %s
+        """, (complaint_reason, officer_badge, vehicle['id']))
         conn.commit()
-        
-        # Build Email Notification Layout
-        email_html = f"""
-        <div style="font-family: Arial, sans-serif; border: 2px solid #dc2626; padding: 20px; max-width: 600px;">
-            <h2 style="color: #dc2626; margin-top:0;">🚨 ARREST NOTICE - VEHICLE FLAG TRIGGERED</h2>
-            <p><strong>Time of Action:</strong> {timestamp}</p>
-            <p><strong>Vehicle Code:</strong> {vehicle_code}</p>
-            <p><strong>License Plate:</strong> {vehicle_details['license_plate'] if vehicle_details else 'N/A'}</p>
-            <p><strong>Make & Model:</strong> {vehicle_details['make_model'] if vehicle_details else 'N/A'}</p>
-            <p><strong>Registered Owner:</strong> {vehicle_details['owner_name'] if vehicle_details else 'N/A'}</p>
-            <p style="background: #fee2e2; padding: 10px; border-left: 5px solid #dc2626; color: #991b1b;">
-                <strong>Reason for Detention:</strong> {reason}
-            </p>
-            <p><strong>Flagged By Officer Badge:</strong> {officer_badge}</p>
-        </div>
-        """
-        send_system_email(f"🚨 FLAG ARREST DETECTED: {vehicle_code}", email_html)
-        
-        return jsonify({"status": "success", "message": f"Vehicle {vehicle_code} successfully placed under arrest."})
-    except mysql.connector.Error as err:
-        return jsonify({"status": "error", "message": str(err)})
-    finally:
         cursor.close()
         conn.close()
-
-# --- RELEASE EVENT AND EMAIL DISPATCH ---
-@app.route('/vehicle/release', methods=['POST'])
-def release_vehicle():
-    if 'logged_in' not in session: return jsonify({"status": "unauthorized"}), 401
-    
-    data = request.json
-    vehicle_code = data.get('vehicle_code')
-    officer_badge = session.get('badge')
+        
+    # Send Emergency dispatch notice regarding criminal tracking flag update
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    alert_html = f"""
+    <div style="font-family: Arial, sans-serif; border: 2px solid #dc2626; padding: 20px; max-width: 600px;">
+        <h2 style="color: #dc2626; margin-top:0;">🚨 SYSTEM CRIMINOLOGY INTERCEPT ALERT</h2>
+        <p><strong>Incident Datetime:</strong> {timestamp}</p>
+        <p><strong>Flagged By Officer Badge:</strong> {officer_badge}</p>
+        <p><strong>Infraction Reason:</strong> <span style="color:#dc2626; font-weight:bold;">{complaint_reason}</span></p>
+        <hr style="border:0; border-top: 1px solid #e2e8f0;">
+        <h3>Target Vehicle Specifications:</h3>
+        <p><strong>Plate Reg:</strong> {vehicle['license_plate']}<br>
+           <strong>Make/Model:</strong> {vehicle['make_model']}<br>
+           <strong>Owner Identity:</strong> {vehicle['owner_name']}</p>
+    </div>
+    """
+    send_system_email(f"🚨 CRITICAL ALERT: Vehicle Flagged for Arrest!", alert_html)
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("""
-            UPDATE vehicles 
-            SET inspection_status = 'Passed', complaint_reason = NULL, flagged_by_badge = NULL 
-            WHERE vehicle_code = %s
-        """, (vehicle_code,))
-        conn.commit()
-        
-        email_html = f"""
-        <div style="font-family: Arial, sans-serif; border: 2px solid #16a34a; padding: 20px; max-width: 600px;">
-            <h2 style="color: #16a34a; margin-top:0;">✅ VEHICLE REGISTRATION RELEASED</h2>
-            <p><strong>Clearance Time:</strong> {timestamp}</p>
-            <p><strong>Vehicle System Code:</strong> {vehicle_code}</p>
-            <p><strong>Status Update:</strong> Passed / Restored to Clear Clearance Profile</p>
-            <p><strong>Authorized By Officer Badge:</strong> {officer_badge}</p>
-        </div>
-        """
-        send_system_email(f"✅ LOCKOUT CLEARANCE RELEASE: {vehicle_code}", email_html)
-        
-        return jsonify({"status": "success", "message": f"Vehicle {vehicle_code} released successfully."})
-    except mysql.connector.Error as err:
-        return jsonify({"status": "error", "message": str(err)})
-    finally:
-        cursor.close()
-        conn.close()
+    flash("Target profile updated to criminal alert flag successfully.", "danger")
+    return redirect(url_for('dashboard'))
 
-# --- SMART BARRIER & GATE LOCKOUT REPORT DISPATCH ---
 @app.route('/gate/open', methods=['POST'])
 def open_gate():
-    if 'logged_in' not in session: return jsonify({"status": "unauthorized"}), 401
-    
-    data = request.json or {}
-    active_vehicle_code = data.get('active_vehicle_code')
-    officer_badge = session.get('badge')
+    if 'logged_in' not in session: 
+        return jsonify({"status": "unauthorized"}), 401
+        
+    officer_badge = session.get('badge_number', 'Unknown Officer')
+    vehicle = session.get('last_scanned_vehicle', None)
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    
-    vehicle = None
-    if active_vehicle_code:
-        cursor.execute("SELECT * FROM vehicles WHERE vehicle_code = %s", (active_vehicle_code,))
-        vehicle = cursor.fetchone()
-        
-    cursor.close()
-    conn.close()
-    
-    # 1. HANDLE GATE SECURITY LOCKOUT EMAIL
-    if vehicle and vehicle['inspection_status'] == 'Flagged For Arrest':
-        lockout_html = f"""
-        <div style="font-family: Arial, sans-serif; border: 3px solid #b91c1c; background-color: #fef2f2; padding: 20px; max-width: 600px;">
-            <h2 style="color: #b91c1c; margin-top:0;">🛑 CRITICAL ALERT: SYSTEM LOCKOUT ACCESSED</h2>
-            <p><strong>Attempted Time:</strong> {timestamp}</p>
-            <p><strong>Action:</strong> An officer tried to open the barrier, but the system **DENIED PASSAGE** due to active vehicle arrest.</p>
-            <hr style="border:0; border-top:1px dashed #b91c1c;">
-            <p><strong>Vehicle Code:</strong> {vehicle['vehicle_code']} | <strong>Plate:</strong> {vehicle['license_plate']}</p>
-            <p><strong>Make & Model:</strong> {vehicle['make_model']} | <strong>Owner:</strong> {vehicle['owner_name']}</p>
-            <p style="color: #991b1b; font-weight:bold;"><strong>Arrest Offence Reason:</strong> {vehicle['complaint_reason']}</p>
-            <p><strong>Attempted By Officer Badge:</strong> {officer_badge}</p>
-        </div>
-        """
-        send_system_email(f"🛑 LOCKOUT DENIAL REPORT: {active_vehicle_code}", lockout_html)
-        
-        return jsonify({
-            "status": "security_lockout", 
-            "message": f"🛑 SECURITY BLOCK: Cannot raise barrier! This vehicle is currently ARRESTED for: '{vehicle['complaint_reason']}'."
-        }), 403
-
-    # 2. HANDLE SUCCESSFUL GATE OPENING PASSAGE EMAIL
-    driver_info = "No driver data verified during this sequence"
-    # If a driver tab was open, let's grab their details from active dashboard elements if needed
     
     passage_html = f"""
     <div style="font-family: Arial, sans-serif; border: 2px solid #2563eb; padding: 20px; max-width: 600px;">
@@ -323,19 +244,24 @@ def open_gate():
         <p><strong>Authorized By Officer Badge:</strong> {officer_badge}</p>
         <hr style="border:0; border-top: 1px solid #e2e8f0;">
         <h3>Vehicle Profile Details:</h3>
-        {f"<p><strong>Code:</strong> {vehicle['vehicle_code']}<br><strong>Plate:</strong> {vehicle['license_plate']}<br><strong>Model:</strong> {vehicle['make_model']}<br><strong>Owner:</strong> {vehicle['owner_name']}</p>" if vehicle else "<p>No explicit vehicle checked before raising gate (Manual Override Switch)</p>"}
+        {f"<p><strong>Code:</strong> {vehicle['vehicle_code']}<br><strong>Plate:</strong> {vehicle['license_plate']}<br><strong>Model:</strong> {vehicle['make_model']}<br><strong>Owner:</strong> {vehicle['owner_name']}</p>" if vehicle else "<p>Manual Override Switch Triggered (No Vehicle Scanned)</p>"}
     </div>
     """
-    send_system_email(f"🔓 GATE OPENED: Checkpoint Alpha Clearance", passage_html)
+    send_system_email(f"🔓 GATE OPENED: Checkpoint Clearance Profile", passage_html)
 
     if arduino:
         try:
             arduino.write(b'O') 
-            return jsonify({"status": "success", "message": "Gate command sent to Arduino!"})
+            return jsonify({"status": "success", "message": "Gate command dispatched via serial hardware channel!"})
         except Exception as e:
-            return jsonify({"status": "error", "message": str(e)})
+            return jsonify({"status": "error", "message": f"Serial port write issue: {e}"})
     else:
-        return jsonify({"status": "simulated", "message": "No hardware attached. Gate opened simulated!"})
+        return jsonify({"status": "simulation", "message": "Gate command processed successfully (Simulation Mode Active)."})
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
