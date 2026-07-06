@@ -325,7 +325,7 @@ def onboard_vehicle():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO vehicles (vehicles_code, license_plate, make_model, owner_name, photo_path, inspection_status)
+            INSERT INTO vehicles (vehicle_code, license_plate, make_model, owner_name, photo_path, inspection_status)
             VALUES (%s, %s, %s, %s, %s, 'Passed')
         """, (vehicle_code, license_plate, make_model, owner_name, photo_path))
         conn.commit()
