@@ -45,8 +45,8 @@ def get_db_connection():
             host=os.environ.get("DB_HOST", "mysql-369f65d6-nimo-b4e8.aivencloud.com"),
             user=os.environ.get("DB_USER", "avnadmin"),
             password=os.environ.get("DB_PASSWORD", "AVNS_AYcPhIh7_1Qg6TqmW_o"),
-            database=os.environ.get("DB_NAME", "defaultdb"),
-            port=int(os.environ.get("DB_PORT", 21217)),
+            database=os.environ.get("DB_NAME", "police_checkpoint"),
+            port=int(os.environ.get("DB_PORT", 23937)),
             autocommit=True,
             connect_timeout=3,
             cursorclass=pymysql.cursors.DictCursor  # 🔄 Automatically makes results act like Python dictionaries
