@@ -42,11 +42,11 @@ def get_db_connection():
     """Establishes connection to the cloud or local infrastructure database dynamically."""
     try:
         conn = pymysql.connect(
-            host=os.environ.get("mysql-3432985d-nimojoseph490-fc32.d.aivencloud.com", "localhost"),
-            user=os.environ.get("avnadmin", "root"),
-            password=os.environ.get("AVNS_AYcPhIh7_1Qg6TqmW_o", "State2580@agogo"),
-            database=os.environ.get("police_checkpoint", "defaultdb"),
-            port=int(os.environ.get("23937", 21217)),
+            host=os.environ.get("DB_HOST", "mysql-369f65d6-nimo-b4e8.aivencloud.com"),
+            user=os.environ.get("DB_USER", "avnadmin"),
+            password=os.environ.get("DB_PASSWORD", "AVNS_AYcPhIh7_1Qg6TqmW_o"),
+            database=os.environ.get("DB_NAME", "defaultdb"),
+            port=int(os.environ.get("DB_PORT", 21217)),
             autocommit=True,
             connect_timeout=3,
             cursorclass=pymysql.cursors.DictCursor  # 🔄 Automatically makes results act like Python dictionaries
@@ -173,7 +173,6 @@ def verify_vehicle_api(vehicle_code):
     
     if not conn:
         # Simulation Mode Mock Response
-        # If user explicitly searched for a flagged layout, let's render it for presentation
         is_flagged = "FLAG" in code_clean or "ARREST" in code_clean
         mock_vehicle = {
             "id": 1,
@@ -326,7 +325,7 @@ def onboard_vehicle():
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO vehicles (vehicle_code, license_plate, make_model, owner_name, photo_path, inspection_status)
+            INSERT INTO vehicles (vehicles_code, license_plate, make_model, owner_name, photo_path, inspection_status)
             VALUES (%s, %s, %s, %s, %s, 'Passed')
         """, (vehicle_code, license_plate, make_model, owner_name, photo_path))
         conn.commit()
