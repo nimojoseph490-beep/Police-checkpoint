@@ -24,8 +24,6 @@
         .result-box { margin-top: 15px; padding: 15px; border-radius: 6px; background: #f8fafc; border: 1px solid #e2e8f0; display: none; }
         .flash-msg { background: #dcfce7; color: #15803d; padding: 10px; border-radius: 4px; margin-bottom: 15px; text-align: center; font-weight: bold;}
         .img-preview { max-width: 150px; display: block; margin-top: 10px; border-radius: 6px; }
-        
-        /* Brilliant error alert display card */
         .error-overlay { display: none; background: #fee2e2; border: 2px solid #ef4444; color: #991b1b; padding: 15px; border-radius: 8px; margin-top: 15px; font-weight: bold; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
     </style>
 </head>
@@ -98,14 +96,15 @@
 </div>
 
 <script>
-    // Global tracker to inform barrier logic which car is currently sitting at the checkpoint
     let currentInspectedVehicleCode = null;
 
     function switchTab(tabId) {
         document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(tabId).classList.add('active');
-        event.currentTarget.classList.add('active');
+        if (window.event && window.event.currentTarget) {
+            window.event.currentTarget.classList.add('active');
+        }
         clearErrorAlert();
     }
 
@@ -121,21 +120,28 @@
         if(!val) return;
         clearErrorAlert();
         
-        fetch(`/verify/driver/${val}`)
+        fetch(`/verify/driver/${encodeURIComponent(val)}`)
             .then(res => res.json())
             .then(data => {
                 resBox.style.display = "block";
-                if(data.id) {
+                if(data && data.found !== false) {
+                    let statusValue = data.status || "Valid";
                     resBox.innerHTML = `
                         <h4 style="margin:0; color:#16a34a;">✅ Record Confirmed</h4>
-                        <p><strong>Code:</strong> ${data.driver_code}<br>
-                        <strong>Name:</strong> ${data.full_name}<br>
-                        <strong>Status:</strong> <span style="color:${data.status === 'Valid' ? 'green':'red'}">${data.status}</span></p>
+                        <p><strong>Code:</strong> ${data.driver_code || "N/A"}<br>
+                        <strong>Name:</strong> ${data.full_name || data.driver_name || "N/A"}<br>
+                        <strong>License:</strong> ${data.license_number || "N/A"}<br>
+                        <strong>Status:</strong> <span style="color:${statusValue === 'Valid' ? 'green':'red'}">${statusValue}</span></p>
                         ${data.photo_path ? `<img class="img-preview" src="/static/${data.photo_path}">` : ''}
                     `;
                 } else {
                     resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ Driver Not Found</h4>`;
                 }
+            })
+            .catch(err => {
+                console.error("Driver check error:", err);
+                resBox.style.display = "block";
+                resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ API Communication Error</h4>`;
             });
     }
 
@@ -145,42 +151,42 @@
         if(!val) return;
         clearErrorAlert();
         
-        fetch(`/verify/vehicle/${val}`)
+        fetch(`/verify/vehicle/${encodeURIComponent(val)}`)
             .then(res => res.json())
             .then(data => {
                 resBox.style.display = "block";
-                if(data.id) {
-                    currentInspectedVehicleCode = data.vehicle_code;
+                
+                if(data && data.found !== false) {
+                    let vehicle = data.vehicle ? data.vehicle : data;
+                    currentInspectedVehicleCode = vehicle.vehicle_code;
                     
-                    // CHECK ARREST LOGIC FOR DYNAMIC UI RENDERING
-                    if (data.inspection_status === "Flagged For Arrest") {
+                    if (vehicle.inspection_status === "Flagged For Arrest") {
                         resBox.innerHTML = `
                             <div style="border: 2px solid #dc2626; background: #fef2f2; padding: 12px; border-radius: 6px;">
                                 <h3 style="margin:0; color:#dc2626;">🚨 ARRESTED VEHICLE DETECTED</h3>
-                                <p style="margin: 5px 0;"><strong>Code:</strong> ${data.vehicle_code}</p>
-                                <p style="margin: 5px 0;"><strong>Plate:</strong> ${data.license_plate}</p>
-                                <p style="margin: 5px 0; color: #b91c1c;"><strong>Reason for Block:</strong> ${data.complaint_reason}</p>
-                                <p style="margin: 5px 0; font-size: 0.85rem;">Flagged by Officer Badge: ${data.flagged_by_badge}</p>
-                                <button class="btn btn-warning" onclick="releaseVehicle('${data.vehicle_code}')">✅ Issue Clearance & Release</button>
+                                <p style="margin: 5px 0;"><strong>Code:</strong> ${vehicle.vehicle_code}</p>
+                                <p style="margin: 5px 0;"><strong>Plate:</strong> ${vehicle.license_plate}</p>
+                                <p style="margin: 5px 0; color: #b91c1c;"><strong>Reason for Block:</strong> ${vehicle.complaint_reason || "No specified context provided"}</p>
+                                <p style="margin: 5px 0; font-size: 0.85rem;">Flagged by Officer Badge: ${vehicle.flagged_by_badge || "N/A"}</p>
+                                <button class="btn btn-warning" onclick="releaseVehicle('${vehicle.vehicle_code}')">✅ Issue Clearance & Release</button>
                             </div>
                         `;
                     } else {
-                        // Normal execution profile with tools to lodge a complaint
                         resBox.innerHTML = `
                             <h4 style="margin:0; color:#16a34a;">✅ Record Clear (Passed)</h4>
-                            <p><strong>Code:</strong> ${data.vehicle_code} | <strong>Plate:</strong> ${data.license_plate}<br>
-                            <strong>Model:</strong> ${data.make_model} | <strong>Owner:</strong> ${data.owner_name}</p>
-                            ${data.photo_path ? `<img class="img-preview" src="/static/${data.photo_path}">` : ''}
+                            <p><strong>Code:</strong> ${vehicle.vehicle_code} | <strong>Plate:</strong> ${vehicle.license_plate}<br>
+                            <strong>Model:</strong> ${vehicle.make_model} | <strong>Owner:</strong> ${vehicle.owner_name}</p>
+                            ${vehicle.photo_path ? `<img class="img-preview" src="/static/${vehicle.photo_path}">` : ''}
                             
                             <div style="margin-top: 15px; border-top: 1px dashed #cbd5e1; padding-top: 10px;">
                                 <label style="font-size: 0.9rem; color: #475569;">Lodge Complaint / Set Offence:</label>
-                                <select id="complaint_reason_dropdown">
+                                <select id="complaint_reason_dropdown" style="margin-top:5px;">
                                     <option value="Expired Registration / Roadworthy">Expired Registration / Roadworthy</option>
                                     <option value="Fake License Plate / Dynamic Forgery">Fake License Plate / Forgery</option>
                                     <option value="Reckless Driving Violation">Reckless Driving</option>
                                     <option value="Reported Stolen Vehicle Alert">Reported Stolen Vehicle Alert</option>
                                 </select>
-                                <button class="btn btn-danger" onclick="arrestVehicle('${data.vehicle_code}')">🚨 Lodge & Arrest Vehicle</button>
+                                <button class="btn btn-danger" onclick="arrestVehicle('${vehicle.vehicle_code}')">🚨 Lodge & Arrest Vehicle</button>
                             </div>
                         `;
                     }
@@ -188,11 +194,18 @@
                     currentInspectedVehicleCode = null;
                     resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ Vehicle Records Unresolved</h4>`;
                 }
+            })
+            .catch(err => {
+                console.error("Vehicle check error:", err);
+                resBox.style.display = "block";
+                resBox.innerHTML = `<h4 style="margin:0; color:#dc2626;">❌ API Communication Error</h4>`;
             });
     }
 
     function arrestVehicle(code) {
-        let reason = document.getElementById('complaint_reason_dropdown').value;
+        let dropdown = document.getElementById('complaint_reason_dropdown');
+        let reason = dropdown ? dropdown.value : "General Offence Infraction";
+        
         fetch('/vehicle/arrest', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -200,8 +213,8 @@
         })
         .then(res => res.json())
         .then(data => {
-            alert(data.message);
-            searchVehicle(); // Refresh interface pane immediately
+            alert(data.message || "Vehicle profile updated successfully.");
+            searchVehicle(); 
         });
     }
 
@@ -213,8 +226,8 @@
         })
         .then(res => res.json())
         .then(data => {
-            alert(data.message);
-            searchVehicle(); // Refresh UI panel
+            alert(data.message || "Vehicle released from enforcement constraints.");
+            searchVehicle(); 
         });
     }
 
@@ -227,11 +240,10 @@
         })
         .then(res => {
             if (!res.ok) {
-                // Handle the 403 Security lockout block error response
                 return res.json().then(errData => {
                     let errCard = document.getElementById('error_alert_card');
                     errCard.style.display = "block";
-                    errCard.innerHTML = errData.message;
+                    errCard.innerHTML = errData.message || "Access Violation Lockout Encountered.";
                 });
             }
             return res.json().then(data => alert(data.message));
